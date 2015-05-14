@@ -1,73 +1,80 @@
-utfString
+utfstring
 =========
 
-small custom unicode string library
+A small unicode string library
 
-usage
+Usage
 =====
 
-the library consists of three `.h` files  
-to use in a project just include `utfstring.h`  
-all functions and classes are exported under the `bast` namespace  
+The library consists of three header files with all functions and classes under the `utf` namespace. To use in a project just include `utfstring.h`. The library consists of two main classes, `stringview` and `utfstring`
 
-This imports two main classes: `utfstring` and `stringview`
+stringview
+===
 
-the `stringview` class is used internally by `utfstring` to convert between unicode encodings.  
-`stringview` relies on iterators and raw pointers to the string sequence  
-and never takes ownership of memory,creates strings,etc.  
+The `stringview` class is used internally by `utfstring` primarily to convert between encodings. 
+`stringview` relies on iterators and raw pointers to the string sequence and never takes ownership of memory, creates strings, etc.  
 
-for convenience, a `make_stringview` function is provided that generates a `stringview` from the passed args:
+For convenience, a `make_stringview` function is provided that generates a `stringview` from the passed arguments
 
       char* text = "Hello, World!"	// size is 14
       std::vector<char16_t> u16data;
       auto literal = make_stringview("This is a string literal");
       auto pointer = make_stringview(text,text+14);
-      auto iterate = make_stringview(u16data.begin(),u16data.end());	// stringview over UTF-16 data  
+      auto iterator = make_stringview(u16data.begin(),u16data.end());	// stringview over UTF-16 data  
 
-To convert between encoding, call the `to<type>` member function with a non-const iterator:  
+To convert between encoding using `stringview`, call `to<type>` with a non-const iterator  
 
      std::string utf8str;
-     iterate.to<utf8_t>(std::back_inserter(utf8str));'  
+     iterator.to<utf8_t>(std::back_inserter(utf8str));'  
 
 It is possible to get the size of any text string in a different encoding
-through the `codeunits<type>` member function(type defaults to the current encoding):  
+by calling `codeunits<type>` (type defaults to the current encoding)
 
      auto utf8size = iterate.codeunits<utf8_t>();
      auto utf16size = iterate.codeunits();  
 
-You can also iterate over the contents of the passed string like an stl container
+You can of course iterate over the contents of the passed string
 
      for (auto it : pointer)
-	std::cout << (char)(*it);			// outputs "Hello, World!"
+         std::cout << (char)(*it);			// outputs "Hello, World!"
 
-the `utfstring` class is an immutable, small unicode-friendly string  
-unlike `stringview`, `utfstring` owns it's text range  
-any member function that involves the internal text returns on a new string  
-a process that sometimes involves copying the entire string over (except for the const ch* operator)  
 
-several typedefs are defined on the utfstring class over specific encodings:  
-     `utf8,ansi,ascii <- utfstring<char>  	
-     utf16,unicode <- utfstring<char16_t>  	
-     utf32 <- utfstring<char32_t>`
+utfstring
+===
+
+The `utfstring` class is an immutable, small unicode-friendly string. Unlike `stringview`, `utfstring` owns it's text range. However any function that would modify the internal text range, instead a new string with the requested modifications.
+
+Several typedefs are provided that specify `utfstring` on specific encodings:
+
+     utf8,ansi,ascii on utfstring<char>
+
+     utf16,unicode on utfstring<char16_t>
+
+     utf32 on utfstring<char32_t>
+
+The creation of any `utfstring` is trivial regardless of the encoding of the original string as all conversions are done implicitly
+
+    utf8 hello("Hello,");
+
+    utf16 utf16_hello(hello);
+
+To explicitly convert to a specific encoding, the `to` member is provided. It is also possible to gain a copy of the internal text array in any encoding through the `text_as` member.
+
+Various common string operations, such as `substr`, `splice`, `cut`, and `+` are also provided. By default, these operations return a string of the same encoding as the parent. All operations work on character and not array indices. By default these operations are 1-indexed. All operations also support reverse indexing.
+
+    utf16 world(" World");  // Conversion from char string to utf16
+
+    utf32 cruel(" Cruel");
+
+    utf8 hello_world = hello + world;
+
+    utf16 sad = hello_world.splice(cruel, 7);  // Hello, Cruel World
+
+    utf32 cynic = sad.cut(8);  // Cruel World
 	
-	
-constructors: copy,move,literal,text,range
-	text_as<dchar>: size_t&
-	assign<dchar,size_t>: &dchar[],void
-	substr: int,int -> string<ch>
-	copy: string<ch>
-	splice<dchar,size_t>: &dchar[],int,int,int -> string<ch>
-	cut: int,int -> string<ch>
-	operator==<dchar>: string<dchar>& -> bool
-	operator!=<dchar>: string<dchar>& -> bool
-	operator=<dchar,size_t>: &dchar[] -> string<ch>&
-	operator+<dchar,size_t>: &dchar[] -> string<ch>
-	begin: auto	"decltype(view.begin())"
-	end: auto "decltype(view.end())"
 
 todo
 ====
 
 add overloads that will accept std::strings,std::vectors,etc. to utfstring  
-add make`_`utfstring function that creates a string with the encoding of the args ?  
-create a large_string class that allows direct manipulation of the internal text string
+add `make_utfstring` function that creates a string with the encoding of the args ?
