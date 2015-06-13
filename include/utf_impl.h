@@ -12,16 +12,12 @@
 
 #include <cassert>
 
-#include <iostream>
-
 #ifdef UTFHPP_NO_CPP11
-	namespace utf{
-		typedef uint16_t char16_t;
-		typedef uint32_t char32_t;
-	}
+namespace utf{
+	typedef uint16_t char16_t;
+	typedef uint32_t char32_t;
+}
 #endif
-
-using namespace std;
 
 namespace utf {
 

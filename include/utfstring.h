@@ -3,98 +3,46 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //         http://www.boost.org/LICENSE_1_0.txt)
 
-/*
-file export overview
-
-utfstring -
-	utf_encoder: class
-
-	constructors: copy,move,literal,text,range
-	strlength: int
-	encoding: char*
-	strsize<encoding>: size_t
-	text_as<dchar>: size_t&		->	dchar*
-	text_as<dhcar>: dchar*
-	assign<dchar,size_t>: &dchar[],void
-	assign<dchar>: dchar*,size_t -> void
-	assign<dchar>: utfstring<dchar>& -> void
-	substr: int,int -> utfstring<ch>
-	copy: utfstring<ch>
-	splice<dchar,size_t>: &dchar[],int,int,int -> utfstring<ch>
-	splice<dchar>: dchar*,size_t,int,int,int -> utfstring<ch>
-	splice<dchar>: utfstring<dchar>&,int,int,int -> utfstring<ch>
-	cut: int,int -> utfstring<ch>
-	operator==<dchar>: utfstring<dchar>& -> bool
-	operator!=<dchar>: utfstring<dchar>& -> bool
-	operator=<dchar,size_t>: &dchar[] -> utfstring<ch>&
-	operator=: utfstring<ch>&& -> utfstring<ch>&
-	operator=<dchar>: utfstring<dchar>& -> utfstring<ch>&
-	operator+<dchar>: utfstring<dchar>& -> utfstring<ch>
-	operator+<dchar,size_t>: &dchar[] -> utfstring<ch>
-	begin: auto	"decltype(view.begin())"
-	end: auto "decltype(view.end())"
-	(const ch*): const ch*
-
-std:
-	begin<ch>: utfstring<ch>& -> auto "decltype(utfstring.begin())"
-	end<ch>: utfstring<ch>& -> auto "decltype(utfstring.end())"
-	operator<<[<stream,ch>]: stream&,utfstring<ch>& -> stream&
-*/
-
 #pragma once
 
 #include "utf.h"
 
-#include <iostream>
+// remove for release
+#include <iostream>				// Operator<< overload on basic_ostream
+#include <string>				// Deprecated 'assign' overload
 
 namespace utf {
-	
+
 	// Move operators outside of class
 	// Add more operator overloads
 	// Change functions to make use of move semantics
 
-	/*--class--
-	utfstring:
-	pass: copy : literal string : char string,size of string : move : char range{begin,end}
-	template: type of the internal text string
-	action: unicode friendly string class
-	action: freely converts between unicode encodings
-	notes: string is immutable outside of calls to operator= and assign.
-			all text manipulation is performed on a copy of the internal text string
-	notes: member functions that operate on the string expect character indexes and not array indexes
-	*/
+	/*
+		* utf::string is an immutable, unicode friendly string class.
+		* Converting between different encodings is performed seamlessly and largely implicitly
+		* All string operations, with the exception of assign and operator=, do not modify the
+		* Internal text string in any way. Rather if a function "modifies" the string, it instead
+		* Returns a new string that has had the desired modifications applied to it.
+		*/
+
 	template <typename ch>
-	class utfstring {
-			/*--typedef--
-			chartype:		typename impl::encoding_for_size<sizeof(ch)>::type chartype
-			action: alias for template parameters to generate the struct used internally in 'utf.h'
-			*/
+	class string {				// consider changing name to string
+		private:
+			// alias for the templated struct used internally in 'utf.h'
 			typedef typename impl::encoding_for_size<sizeof(ch)>::type chartype;
 
-			/*--friend--
-			stringview: 
-			utfstring<dchar>: prevent errors when accessing members of a utfstring<dchar> (technically a different type than utfstring<ch>)
-			*/
+			// friend class to prevent errors when accessing members of a string when it has a different encoding (technically a different type)
 			friend struct stringview<const ch*>;
-			template <typename dchar> friend class utfstring;
-		private:
-			/*--function--
-			priv_encode:	return - const char*
-			template: template { encoding }
-			action: returns a text string with the strings encoding
-			throws: template type is not overloaded below
-			*/
+			template <typename dchar> friend class string;
+
+			// Returns the unicode encoding as a text string (Can I make these static?)
 			template <typename coding>
 			const char* priv_encode() { throw("Error: Incorrect coding specified"); return ""; }
 			template <>	const char* priv_encode<utf8_t>() { return "UTF-8"; }
 			template <>	const char* priv_encode<utf16_t>() { return "UTF-16"; }
 			template <>	const char* priv_encode<utf32_t>() { return "UTF-32"; }
 
-			/*--function--
-			!is_valid_range:	return - bool
-			action: determine if the passed indexs are valid as a range
-					 ie. if idx1 points to a character after idx2 it is invalid
-			*/
+			// Determines whether the given indices describe a valid range (ie. |idx1| < |idx2|)
 			bool is_valid_range(int idx1,int idx2) {
 				return (view.codeidx(idx1) < view.codeidx(idx2));
 			}
@@ -103,55 +51,36 @@ namespace utf {
 			ch* text;
 			stringview<const ch*> view;
 
-			/*--function--
-			rawAssign:		return - void
-			pass: stringview to the assign string
-			template: type of stringview(inferred)
-			action: common code to initialize internal text string with the text string observed by temp
-			notes: also reloacates the internal stringview to point to the new text
-			*/
+			// Internal code chunk to initialize internal text string/stringview
 			template <typename dest>
 			void rawAssign(stringview<dest>& temp) {
 				text = new ch[temp.codeunits<chartype>()];
-				temp.to<chartype>(utf_encoder(text));
-				view.refocus(text,text + temp.codeunits<chartype>());
+				temp.to<chartype>(utf_encoder(text));						// fill text
+				view.refocus(text, text + temp.codeunits<chartype>());
 			}
-			/*--function--
-			rawSplice:		return - string<ch>
-			pass: stringview to the central piece,index of
-			template: type of stringview(inferred)
-			action: common code to create a new string by inserting the text observed by piece2
-						into a copy of text at position idx_sp
-			notes: guaranteed to add delimiting characters onto the end of the new text string
-			plan: change return type to utfstring<ch>&&
-			*/
+
+			// Internal code chunk to handle the inserting of one string into another at a given index
 			template <typename dest>
-			utfstring<ch> rawSplice(utfstringview<dest>& piece2,int idx_sp) {
-				auto piece1 = make_stringview(text,text + view.codeidx(idx_sp));
-				auto piece3 = make_stringview(text + view.codeidx(idx_sp),text + view.codeidx(0));
+			string<ch> rawSplice(stringview<dest>& piece2,int idx_sp) {					// Perhaps change to string<ch>&&
+				auto piece1 = make_stringview(text, text + view.codeidx(idx_sp));
+				auto piece3 = make_stringview(text + view.codeidx(idx_sp), text + view.codeidx(0));
 				// add the null bit onto the string
 
 				ch* newText = new ch[piece1.codeunits() + piece2.codeunits<chartype>() + piece3.codeunits()];
 				piece3.to<chartype>(piece2.to<chartype>(piece1.to<chartype>(utf_encoder(newText))));
-
-				return utfstring<ch>(newText,newText + piece1.codeunits() + piece2.codeunits<chartype>() + piece3.codeunits());
-
+	
+				return string<ch>(newText, newText + piece1.codeunits() + piece2.codeunits<chartype>() + piece3.codeunits());
 			}
 
 		public:
-
-			/*--class--
-			utf_encoder:
-			pass: pointer to the beginning of the text string
-			action: mutable iterator over a text string for use in stringview::to
-					enables encoding conversion directly to a text string
-			notes: does not store an end position. possible to corrupt memory
-					if the wrapped text string is shorter than the values its initialized with
-			notes: derives internal type from string's type
+			/*
+			This class represents a mutable iterator over a c text string/array for use in conjungtion with stringview::to
+			Notes: Does not store an end position. Currently possible to corrupt memory if the wrapped string is shorter than the encoding string
 			*/
 			class utf_encoder {
 				private:
 					ch* text;
+
 				public:
 					utf_encoder(ch* pos) : text(pos) { }
 					~utf_encoder() { text = nullptr; }
@@ -159,10 +88,12 @@ namespace utf {
 					auto operator*() -> decltype(*text) {
 						return *text;
 					}
+
 					auto operator++() -> decltype(*text) {
 						++text;
 						return *text;
 					}
+
 					auto operator++(int)-> decltype(*text) {
 						auto tmp = *text;
 						++text;
@@ -174,332 +105,258 @@ namespace utf {
 
 			// constructors
 			template <typename dchar,size_t N>
-			utfstring(const dchar(&_text)[N]) : view(0,0) {
+			string(const dchar(&_text)[N]) : view(0,0) {					// Text Literal (Not sure about handling custom literals)
 				rawAssign(make_stringview(_text));
 			}
 			template <typename dchar>
-			utfstring(const dchar* _text,size_t N) : view(0,0) {
-				rawAssign(make_stringview(_text,_text+N));
+			string(const dchar* _text, size_t N) : view(0,0) {				// C-style string
+				rawAssign(make_stringview(_text,_text + N));
 			}
 			template <typename dchar>
-			utfstring(utfstring<dchar>& str) : view(0,0) {
+			string(string<dchar>& str) : view(0,0) {						// Encoding converter
 				rawAssign(str.view);
 			}
 
+			// Note: How to initialize with an std::string???
+
 			// move constructors
-			utfstring(ch* start,ch* end) : text(start),view(start,end) { 
+			string(ch* start, ch* end) : text(start),view(start,end) {		// Char pointers
 				start = nullptr;
 				end = nullptr;
 			}
-			utfstring(utfstring<ch>&& str) : text(str.text),view(0,0) { 
+
+			string(string<ch>&& str) : text(str.text),view(0,0) {			// string r-value (I don't think this is used to often
 				view.refocus(str.view);
 				str.text = nullptr;
 			}
 
 			// destructor
-			~utfstring() { delete[] text; }
+			~string() { delete[] text; }
 
 			// string info functions
 
-			/*--function--
-			strlength:		return - int
-			pass: void
-			action: returns the number of characters in the string
-			notes: untested (not sure if codepoints will give the desired results)
-			*/
-			int strlength() { return view.codepoints(); }
-			/*--function--
-			encoding:		return - const char*
-			pass: void
-			action: returns a text string describing the encoding of the string
-			notes: calls priv_encode<chartype> to prevent return of incorrect encodings (ie. "UTF-16" on a utf8 string)
-					encoding does not have a template argument that could be overrode by a user
-			*/
+			// The number of characters in a string
+			int length() { return view.codepoints(); }			// test to ensure that codepoints will give the right number
+
 			const char* encoding() { return priv_encode<chartype>(); }
-			/*--function--
-			strsize:		return - size_t
-			template: encoding
-			action: returns the array size of the internal string in the specified encoding 
-			notes: compile-time error if not called with template types { char,char16_t,char32_t,utf8_t,utf16_t,utf32_t }
-					error thrown by utf::impl functions/classes
-			notes: specializations are to prevent mappings from being evaluated exactly like keys
-					char maps to utf8_t , char16_t to utf16_t , etc.	{ key -> mapping }
-			*/
-			template <typename dchar =ch>
-			size_t strsize() { return view.codeunits<typename impl::encoding_for_size<sizeof(dchar)>::type>(); }
+
+			// Gives the array size of the string in the specified encoding (Relies on an explicit template type)
+			template <typename dchar = ch>
+			size_t strsize() { return view.codeunits<typename impl::encoding_for_size<sizeof(dchar)>::type>(); }	// translates char -> utf8_t, char16_t -> utf16_t, etc.
 			template <>	size_t strsize<utf8_t>() { return view.codeunits<utf8_t>(); }
 			template <>	size_t strsize<utf16_t>() { return view.codeunits<utf16_t>(); }
 			template <>	size_t strsize<utf32_t>() { return view.codeunits<utf32_t>(); }
 
 			// char string conversions
 
-			/*--function--
-			text_as:		return - dchar*
-			pass: { size_t& }
-			template: type of string to return
-			action: returns a copy of the internal text string in the specified encoding
-			notes: relies on an explicit template type. helps with code readability
-			notes: does not have a similar specialization pattern to priv_encode
-					compile-time error if not called with template type { char, char16_t, char32_t }
-			notes: overload provided with size reference parameter
-			*/
+			// Converts a copy of the string into a character array with the desired encoding
+			// Note: Currently only "work" on dchar = { char, char16_t, char32_t }
 			template <typename dchar>
 			dchar* text_as() {
 				typedef typename impl::encoding_for_size<sizeof(dchar)>::type dchartype;
 
 				dchar* _text = new dchar[view.codeunits<dchartype>()];
-				view.to<dchartype>(utfstring<dchar>::utf_encoder(_text));
+				view.to<dchartype>(string<dchar>::utf_encoder(_text));
 				return _text;
 			}
+
+			// Overload with a size parameter reference (compatibility with c-style string operations)
 			template <typename dchar>
 			dchar* text_as(size_t& N) {
 				N = strsize<dchar>();
 				return text_as<dchar>();
 			}
-			template <typename dchar>
-			utfstring<dchar> to() {
-				size_t N=0;
-				dchar* _text = text_as<dchar>(N);
-				return utfstring<dchar>(_text,_text + N);
+
+			// deprecated: use string constructor
+			template <typename dchar> string<dchar> to() {
+				return string<dchar>(*this);
 			}
 
 			// mutation functions
 
-			/*--function--
-			assign:			return - void
-			pass: string to copy over
-			template: encoding of string
-			action: initialize internal text string with a passed text string
-			notes: deletes the internal text string first
-			*/
+			// Changes the internal text to the passed string
 			template <typename dchar,size_t N>
-			void assign(const dchar(&_text)[N]) {
+			void assign(const dchar(&_text)[N]) {								// Text Literal
 				delete[] text;
 				rawAssign(make_stringview(_text));
 			}
+
 			template <typename dchar>
-			void assign(const dchar* _text,size_t N) {
+			void assign(const dchar* _text, size_t N) {							// C-style strings
 				delete[] text;
 				rawAssign(make_stringview(_text,_text + N));
 			}
+
 			template <typename dchar>
-			void assign(utfstring<dchar>& str) {
+			void assign(string<dchar>& str) {									// Encoding converter
 				delete[] text;
 				rawAssign(str.view);
 			}
 
+			// Currently deprecated
+			void assign(std::string& str) {
+				delete[] text;
+				// doesn't append ending character?
+				rawAssign(make_stringview(str.begin(), str.end()));
+			}
+
 			// text manipulation functions
 
-			/*--function--
-			substr:			return - utfstring<ch>
-			pass: beginning character of new string{1}, end character of the new string{-1}
-			action: returns a substring taken from the internal text string from character idx_b to character idx_e
-			notes: index 1 corresponds to the first character in the string and -1 to the last
-					index 2 to the second character and -2 to the next to last etc.
-			notes: guaranteed to add delimiting characters to the end of the string
-			throws: character idx_b lies after idx_e in the text string
-			*/
-			utfstring<ch> substr(int idx_b = 1,int idx_e = -1) {
-				if(!is_valid_range(idx_b,idx_e)) throw("Error: invalid index range");
+			/*
+				* Creates a substring from the character index 'idx_b' to character index 'idx_e'
+				* Note that strings are 1-indexed by default (the first character is indexed with 1, the second with 2, ...
+				* This function also provides the ability to index from the back of the string by using a "negative" index
+				* The function will throw an error if the actual indices given do not represent a valid substring
+				*/
+			string<ch> substr(int idx_b = 1,int idx_e = -1) {
+				if(!is_valid_range(idx_b, idx_e)) throw("Error: invalid index range");
 
-				auto sub = make_stringview(text + view.codeidx(idx_b),text + view.codeidx(idx_e) + (idx_e>0));
+				auto sub = make_stringview(text + view.codeidx(idx_b), text + view.codeidx(idx_e) + (idx_e > 0));
 				auto end = make_stringview(text + view.codeidx(-1), text + view.codeidx(0));
 
-				ch* substr = new ch[sub.codeunits()+end.codeunits()];
-
+				ch* substr = new ch[sub.codeunits() + end.codeunits()];
 				end.to<chartype>(sub.to<chartype>(utf_encoder(substr)));
 
-				return utfstring<ch>(substr,substr + sub.codeunits<chartype>() + end.codeunits<chartype>());
+				return string<ch>(substr, substr + sub.codeunits<chartype>() + end.codeunits<chartype>());
 			}
-			/*--function--
-			copy:			return - utfstring<ch>
-			pass: void
-			action: returns a copy of the string
-			notes: wrapper for substr with default arguments
-			*/
-			utfstring<ch> copy() { return substr(); }
-			/*--function--
-			splice:			return - utfstring<ch>
-			pass: text string to splice in,{ size },character after split{-1},beginning of substring{1}, end of substring{-1}
-			template: encoding of string
-			action: create a new string by inserting the passed text substring into the internal text string at character idx_sp
-			notes: guaranteed to add delimiting characters to the end of the string
-			throws: character idx_b lies after idx_e in the text string
-			*/
-			template <typename dchar>
-			utfstring<ch> splice(dchar* _text,size_t N,int idx_sp = -1,int idx_b = 1,int idx_e = -1) {
-				if(!is_valid_range(idx_b,idx_e)) throw("Error: invalid index range");
 
-				auto temp = make_stringview(_text,_text + N);
-				return rawSplice(make_stringview(_text + temp.codeidx(idx_b),_text + temp.codeidx(idx_e) + (idx_e > 0)),idx_sp);
-			}			
+			string<ch> copy() { return substr(); }				// Couldn't I just return *this; ???
+
+	
+			// Splices the given text substring into the string at the given position
+			// General arguments: splice string, character index after split, splice substring begin, splice substring end
+
+			// Splices (Do I really need all these overloads ???)
+			template <typename dchar>
+			string<ch> splice(dchar* _text, size_t N, int idx_sp = -1, int idx_b = 1, int idx_e = -1) {
+				if(!is_valid_range(idx_b, idx_e)) throw("Error: invalid index range");
+
+				auto temp = make_stringview(_text, _text + N);
+				return rawSplice(make_stringview(_text + temp.codeidx(idx_b), _text + temp.codeidx(idx_e) + (idx_e > 0)), idx_sp);
+			}
+
 			template<typename dchar,size_t N>
-			utfstring<ch> splice(dchar(&_text)[N],int idx_sp = -1,int idx_b = 1,int idx_e = -1) {
-				if(!is_valid_range(idx_b,idx_e)) throw("Error: invalid index range");
+			string<ch> splice(dchar(&_text)[N], int idx_sp = -1, int idx_b = 1, int idx_e = -1) {
+				if(!is_valid_range(idx_b, idx_e)) throw("Error: invalid index range");
 
 				auto temp = make_stringview(_text);
-				return rawSplice(make_stringview(_text + temp.codeidx(idx_b),_text + temp.codeidx(idx_e) + (idx_e > 0)),idx_sp);
+				return rawSplice(make_stringview(_text + temp.codeidx(idx_b), _text + temp.codeidx(idx_e) + (idx_e > 0)), idx_sp);
 			}
+
 			template <typename dchar>
-			utfstring<ch> splice(utfstring<dchar>& str,int idx_sp = -1,int idx_b = 1,int idx_e = -1) {
-				if(!is_valid_range(idx_b,idx_e)) throw("Error: invalid index range");
+			string<ch> splice(string<dchar>& str, int idx_sp = -1, int idx_b = 1, int idx_e = -1) {
+				if(!is_valid_range(idx_b, idx_e)) throw("Error: invalid index range");
 
 				return rawSplice(make_stringview(str.text + str.view.codeidx(idx_b),
-					str.text + str.view.codeidx(idx_e) + (idx_e > 0)),idx_sp);
+					str.text + str.view.codeidx(idx_e) + (idx_e > 0)), idx_sp);
 			}
-			/*--function--
-			cut:			return - utfstring<ch>
-			pass: beginning of substr{1},end of substring{-1}
-			action: return a copy of the internal text string with the specified substr removed
-			notes: guaranteed to add delimiting characters to the end of the string
-			*/
-			utfstring<ch> cut(int idx_b = 1,int idx_e = -1) {
-				auto piece1 = make_stringview(text,text+view.codeidx(idx_b));
+
+			// Removes the specified substring
+			string<ch> cut(int idx_b = 1,int idx_e = -1) {
+				auto piece1 = make_stringview(text,text + view.codeidx(idx_b));
 				auto piece2 = make_stringview(text + view.codeidx(idx_e) + (idx_e > 0),text + view.codeidx(0));
-				
+
 				ch* str = new ch[piece1.codeunits() + piece2.codeunits()];
 				piece2.to<chartype>(piece1.to<chartype>(utf_encoder(str)));
 
-				return utfstring<ch>(str,str + piece1.codeunits() + piece2.codeunits());
+				return string<ch>(str,str + piece1.codeunits() + piece2.codeunits());
 			}
 
 			// boolean operators
 
-			/*--function--
-			operator==:		return - bool
-			pass: string to compare
-			template: encoding of string(inferred)
-			action: Compares two strings for equality
-			notes: Does an arraywise comparison. Two string are equal if
-					and only if their internal text strings are exactly equal
-			notes: Since it does an arraywise comparison, it can't do a case independent comparison
-			*/
+			// Performs an arraywise comparison of two strings. Performs any necessary conversions first
 			template <typename dchar>
-			bool operator==(utfstring<dchar>& str) {
+			bool operator==(string<dchar>& str) {
 				if(str.strsize<ch>() == strsize()) {
 					ch* comp = str.text_as<ch>();
+
 					for(auto i = 0; i != strsize(); ++i)
 						if(comp[i] != text[i])
 							return false;
+
 					return true;
 				}
+
 				return false;
 			}
-			/*--function--
-			pass: string to compare
-			template: encoding of string(inferred)
-			operator!=:		return - bool
-			action: opposite of operator==
-			*/
+
 			template <typename dchar>
-			bool operator!=(utfstring<dchar>& str) {
+			bool operator!=(string<dchar>& str) {
 				return !operator==(str);
 			}
 
+			// bool operator< ???
+
 			// assignment operators
 
-			/*--function--
-			operator=:		return - string<ch>&
-			pass: string to use in assignment
-			template: encoding of string(inferred)
-			action: initializes the internal text string with a passed text string
-			notes: wrapper for assign
-			*/
 			template <typename dchar>
-			utfstring<ch>& operator=(utfstring<dchar>& str) {
+			string<ch>& operator=(string<dchar>& str) {				// Encoding converter 
 				assign(str);
 				return *this;
 			}
-			utfstring<ch>& operator=(utfstring<ch>&& str) {
+
+			string<ch>& operator=(string<ch>&& str) {				// string r-value (I don't have any functions that can produce this though)
 				text = str.text;
 				view = str.view;
 				str.text = nullptr;
 				return *this;
 			}
+
 			template <typename dchar,size_t N>
-			utfstring<ch>& operator=(dchar (&str) [N]) {
+			string<ch>& operator=(dchar(&str)[N]) {					// string literal
 				assign(str);
 				return *this;
 			}
 
 			// concatentation operators
 
-			/*--function--
-			operator+:		return - utfstring<ch>
-			pass: string to append
-			template: encoding of string(inferred)
-			action: appends the passed text string to the internal text string into a new text string
-			notes: wrapper for splice with default arguments
-			*/
+			// Appends the given string to the current string (wraps splice)
 			template <typename dchar>
-			utfstring<ch> operator+(utfstring<dchar>& str) {
+			string<ch> operator+(string<dchar>& str) {
 				return splice(str);
 			}
-			template <typename dchar,size_t N>
-			utfstring<ch> operator+(const dchar (&str) [N]) {
+
+			template <typename dchar, size_t N>
+			string<ch> operator+(const dchar(&str)[N]) {				// Couldn't I just provide an overload for string/string&&
 				return splice(str,N);
 			}
 
 			// other functions
-
-			/*--function--
-			begin:			return - decltype(view.begin())
-			pass: void
-			action: returns a non-mutable iterator over the internal text string
-			notes: wrapper for view.begin()
-			*/
+				
+			// Allows iteration over the string (Add const and c_begin, etc. ???)
 			auto begin() -> decltype(view.begin()) { return view.begin(); }
-			/*--function--
-			end:			return - decltype(view.end())
-			pass: void
-			action: returns a non-mutable iterator at the end of the internal text string
-			notes: wrapper for view.end()
-			*/
 			auto end() -> decltype(view.end()) { return view.end(); }
-			/*--function--
-			const ch*:		return - const ch*
-			pass: (const ch*)<string>
-			action: cast operator to the internal text string
-			*/
+
+			// Cast operator to the internal text string (const qualified to prevent modifications)
 			explicit operator const ch*() { return this->text; }
 	};
 
-	// use typedefs
-	typedef utfstring<char> utf8;
-	typedef utfstring<char> ansi;
-	typedef utfstring<char> ascii;
-	typedef utfstring<char16_t> utf16;
-	typedef utfstring<char16_t> unicode;
-	typedef utfstring<char32_t> utf32;
+	
 }
+
+// usage typedefs (move to utf namespace ???)
+typedef utf::string<char> utf8;
+typedef utf::string<char16_t> utf16;
+typedef utf::string<char32_t> utf32;
+typedef utf8 ansi;
+typedef utf8 ascii;
+typedef utf16 unicode;
 
 namespace std {
 	
 	// external begin and end for use in ranged for loop
 	template <typename ch>
-	auto begin(utf::utfstring<ch>& str) -> decltype(str.begin()) { return str.begin(); }
+	auto begin(utf::string<ch>& str) -> decltype(str.begin()) { return str.begin(); }
 	template <typename ch>
-	auto end(utf::utfstring<ch>& str) -> decltype(str.end()) { return str.end(); }
+	auto end(utf::string<ch>& str) -> decltype(str.end()) { return str.end(); }
 
-	// overloaded input stream operator
-	/*--function--
-	operator<<[stream,ch]:		returns - stream&
-	pass: stream& to input to, utfstring<ch>& to input from
-	action: iterates over the text of the string pushing the individual chars into the stream
-	
-	possible to edit so that text is automatically converted into the type of stream ???
-	*/
-	template <class stream,typename ch>
-	stream& operator<<(stream& str,utf::utfstring<ch>& text) {
-		for(auto c : text)
-			str << (ch)c;
+	// Overloads the stream operator (for usage in cout, etc.)
+	// Currently relies on explicit
+	template<typename ch,typename dchar>
+	basic_ostream<dchar>& operator<<(basic_ostream<dchar>& str, utf::string<ch>& text) {
+		str << text.text_as<dchar>();
 		return str;
 	}
-	/*
-	template <template<typename> class stream,typename ch>
-	stream<ch>& operator<<(stream<ch>& str,utf::utfstring<ch>& text) {
 
-	}
-	*/
-
+	//add overload for insertion and getline
 }
