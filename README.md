@@ -1,7 +1,8 @@
 utfstring
 =========
 
-A small unicode string library
+A small, immutable unicode string library that aims to trivialize the process of converting between various Unicode encodings.
+utfString uses the [utf](https://github.com/jalfd/utf.hpp) library by [jalfd](https://github.com/jalfd) to handle the process of converting between encodings.
 
 Usage
 =====
